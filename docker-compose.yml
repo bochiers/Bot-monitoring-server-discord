@@ -1,0 +1,12 @@
+services:
+  bot-monitoring:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bot-monitoring
+    restart: unless-stopped
+    env_file:
+      - .env
+    # Mode default: python bot.py (Interactive Discord Bot)
+    # Untuk mode standalone: ganti command dengan `python main.py`
+    command: ["python", "bot.py"]

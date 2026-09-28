@@ -1,0 +1,43 @@
+# Environment & Secrets (Jangan masukkan file secret ke image docker)
+.env
+*.env
+*.env.*
+
+# Python caches & virtual environments
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs & temp files
+*.log
+tmp/
+temp/
+
+# Systemd & Documentation non-essential in container
+systemd/

@@ -1,0 +1,19 @@
+[Unit]
+Description=Website Monitoring Bot with Discord Alerts
+After=network.target
+
+[Service]
+Type=simple
+User=stuckwyu
+WorkingDirectory=/home/stuckwyu/dev/code/bot-monitoring
+ExecStart=/home/stuckwyu/dev/code/bot-monitoring/.venv/bin/python main.py
+Restart=always
+RestartSec=10
+EnvironmentFile=/home/stuckwyu/dev/code/bot-monitoring/.env
+
+# Standard output and error logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
