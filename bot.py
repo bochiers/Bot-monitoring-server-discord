@@ -34,9 +34,9 @@ class InteractiveMonitoringBot(commands.Bot):
         intents = discord.Intents.default()
         intents.message_content = True
 
-        # Prefix supports mentioning the bot (@Bot <command>) as well as 's!', 'S!', '!'
+        # Prefix supports mentioning the bot (@Bot <command>) as well as '?', 's!', 'S!', '!'
         super().__init__(
-            command_prefix=commands.when_mentioned_or("s!", "S!", "!"),
+            command_prefix=commands.when_mentioned_or("?", "s!", "S!", "!"),
             intents=intents,
             help_command=None,
         )
@@ -127,7 +127,7 @@ class InteractiveMonitoringBot(commands.Bot):
         # Set rich presence
         activity = discord.Activity(
             type=discord.ActivityType.watching,
-            name=f"{len(self.config.target_urls)} website(s) | s!help",
+            name=f"{len(self.config.target_urls)} website(s) | ?help",
         )
         await self.change_presence(activity=activity)
 
@@ -341,18 +341,162 @@ class InteractiveMonitoringBot(commands.Bot):
             latency_ms = self.latency * 1000.0
             await ctx.reply(f"🏓 Pong! Latency Bot: `{latency_ms:.1f} ms`", mention_author=False)
 
+        @self.command(name="sync", help="Sinkronisasi slash command ke server: ?sync [all|global|clear]")
+        async def cmd_sync(ctx: commands.Context, target: Optional[str] = None):
+            async with ctx.typing():
+                mode = (target or "").strip().lower()
+
+                if mode in ("all", "guilds", "servers"):
+                    if not self.guilds:
+                        embed = discord.Embed(
+                            title="⚠️ Sinkronisasi Command",
+                            description="Bot belum tergabung dalam server manapun.",
+                            color=COLOR_DEGRADED,
+                        )
+                        await ctx.reply(embed=embed, mention_author=False)
+                        return
+
+                    success_guilds = []
+                    failed_guilds = []
+                    for guild in self.guilds:
+                        try:
+                            self.tree.copy_global_to(guild=guild)
+                            synced = await self.tree.sync(guild=guild)
+                            success_guilds.append(f"• **{guild.name}** (`{len(synced)} command`)")
+                        except Exception as e:
+                            logger.error(f"Failed to sync commands to guild {guild.name} ({guild.id}): {e}")
+                            failed_guilds.append(f"• **{guild.name}**: {e}")
+
+                    desc_lines = []
+                    if success_guilds:
+                        desc_lines.append(f"✅ Berhasil menyinkronkan ke **{len(success_guilds)}/{len(self.guilds)}** server yang mengundang bot:\n" + "\n".join(success_guilds))
+                    if failed_guilds:
+                        desc_lines.append(f"\n⚠️ Gagal menyinkronkan ke **{len(failed_guilds)}** server:\n" + "\n".join(failed_guilds))
+
+                    embed = discord.Embed(
+                        title="🔄 Sinkronisasi Command (Semua Server)",
+                        description="\n\n".join(desc_lines),
+                        color=COLOR_RECOVERED if not failed_guilds else COLOR_DEGRADED,
+                        timestamp=discord.utils.utcnow(),
+                    )
+                    await ctx.reply(embed=embed, mention_author=False)
+
+                elif mode in ("global", "g"):
+                    try:
+                        synced = await self.tree.sync()
+                        embed = discord.Embed(
+                            title="🌐 Sinkronisasi Global Berhasil",
+                            description=(
+                                f"Berhasil menyinkronkan **{len(synced)}** application command secara global ke Discord API.\n\n"
+                                "⏱️ *Catatan: Propagasi global Discord dapat memakan waktu hingga 1 jam.*"
+                            ),
+                            color=COLOR_RECOVERED,
+                            timestamp=discord.utils.utcnow(),
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to sync global commands: {e}")
+                        embed = discord.Embed(
+                            title="❌ Gagal Sinkronisasi Global",
+                            description=f"Terjadi kesalahan saat sinkronisasi global:\n```{e}```",
+                            color=COLOR_DOWN,
+                        )
+                    await ctx.reply(embed=embed, mention_author=False)
+
+                elif mode in ("clear", "clean"):
+                    if not ctx.guild:
+                        embed = discord.Embed(
+                            title="⚠️ Gagal Menghapus Command",
+                            description="Perintah pembersihan command hanya dapat dijalankan di dalam server.",
+                            color=COLOR_DOWN,
+                        )
+                        await ctx.reply(embed=embed, mention_author=False)
+                        return
+                    try:
+                        self.tree.clear_commands(guild=ctx.guild)
+                        await self.tree.sync(guild=ctx.guild)
+                        embed = discord.Embed(
+                            title="🧹 Pembersihan Command Berhasil",
+                            description=f"Semua slash command khusus server **{ctx.guild.name}** telah dihapus.",
+                            color=COLOR_INFO,
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to clear commands for guild {ctx.guild.name}: {e}")
+                        embed = discord.Embed(
+                            title="❌ Gagal Menghapus Command",
+                            description=f"Terjadi kesalahan saat membersihkan command:\n```{e}```",
+                            color=COLOR_DOWN,
+                        )
+                    await ctx.reply(embed=embed, mention_author=False)
+
+                else:
+                    # Default: Sync to current guild (or fallback to all if in DM)
+                    if ctx.guild:
+                        try:
+                            self.tree.copy_global_to(guild=ctx.guild)
+                            synced = await self.tree.sync(guild=ctx.guild)
+                            cmd_list = ", ".join([f"`/{getattr(c, 'name', str(c))}`" for c in synced]) if synced else "Tidak ada"
+                            embed = discord.Embed(
+                                title="🔄 Sinkronisasi Command Berhasil",
+                                description=(
+                                    f"Berhasil menyinkronkan **{len(synced)}** slash command ke server **{ctx.guild.name}**!\n\n"
+                                    f"**Daftar Command Aktif:**\n{cmd_list}\n\n"
+                                    f"💡 *Slash command langsung aktif dan dapat digunakan di server ini.*"
+                                ),
+                                color=COLOR_RECOVERED,
+                                timestamp=discord.utils.utcnow(),
+                            )
+                            embed.set_footer(
+                                text=f"Total server bot: {len(self.guilds)} • Gunakan '?sync all' untuk menyinkronkan ke seluruh server"
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to sync commands to guild {ctx.guild.name}: {e}")
+                            embed = discord.Embed(
+                                title="❌ Gagal Sinkronisasi Command",
+                                description=f"Terjadi kesalahan saat menyinkronkan command ke server **{ctx.guild.name}**:\n```{e}```",
+                                color=COLOR_DOWN,
+                            )
+                        await ctx.reply(embed=embed, mention_author=False)
+                    else:
+                        # DM fallback: sync all guilds where bot is invited
+                        if not self.guilds:
+                            embed = discord.Embed(
+                                title="⚠️ Sinkronisasi Command",
+                                description="Bot belum tergabung dalam server manapun.",
+                                color=COLOR_DEGRADED,
+                            )
+                            await ctx.reply(embed=embed, mention_author=False)
+                            return
+
+                        success_count = 0
+                        for guild in self.guilds:
+                            try:
+                                self.tree.copy_global_to(guild=guild)
+                                await self.tree.sync(guild=guild)
+                                success_count += 1
+                            except Exception as e:
+                                logger.error(f"Failed to sync to guild {guild.name}: {e}")
+
+                        embed = discord.Embed(
+                            title="🔄 Sinkronisasi Command Berhasil (DM Mode)",
+                            description=f"Berhasil menyinkronkan slash command ke **{success_count}/{len(self.guilds)}** server yang mengundang bot.",
+                            color=COLOR_RECOVERED,
+                            timestamp=discord.utils.utcnow(),
+                        )
+                        await ctx.reply(embed=embed, mention_author=False)
+
         @self.command(name="help", help="Bantuan perintah bot")
         async def cmd_help(ctx: commands.Context):
             embed = discord.Embed(
                 title="🤖 Panduan Perintah Bot Monitoring",
                 description=(
-                    "Gunakan prefix **`s!`**, **tag/mention bot** (`@Server Alarm`), atau **Slash Command** (`/`):\n\n"
-                    "• `s!status` / `@Bot status` / `/status` — Cek status realtime semua website\n"
-                    "• `s!check [url]` / `@Bot check [url]` / `/check` — Jalankan live check diagnostik\n"
-                    "• `s!add <url>` / `@Bot add <url>` / `/add` — Tambah website baru ke monitoring\n"
-                    "• `s!remove <url>` / `@Bot remove <url>` / `/remove` — Hapus website dari monitoring\n"
-                    "• `s!list` / `@Bot list` / `/list` — Daftar website yang sedang dipantau\n"
-                    "• `s!ping` / `@Bot ping` / `/ping` — Cek latency koneksi Discord bot"
+                    "Gunakan prefix **`?`**, **`s!`**, **tag/mention bot** (`@Server Alarm`), atau **Slash Command** (`/`):\n\n"
+                    "• `?status` / `s!status` / `/status` — Cek status realtime semua website\n"
+                    "• `?check [url]` / `s!check [url]` / `/check` — Jalankan live check diagnostik\n"
+                    "• `?add <url>` / `s!add <url>` / `/add` — Tambah website baru ke monitoring\n"
+                    "• `?remove <url>` / `s!remove <url>` / `/remove` — Hapus website dari monitoring\n"
+                    "• `?list` / `s!list` / `/list` — Daftar website yang sedang dipantau\n"
+                    "• `?ping` / `s!ping` / `/ping` — Cek latency koneksi Discord bot\n"
+                    "• `?sync [all|global|clear]` — Sinkronisasi slash command ke server Discord"
                 ),
                 color=COLOR_INFO,
             )

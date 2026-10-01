@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock, patch
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from bot import InteractiveMonitoringBot
 from config import Config
@@ -96,4 +97,149 @@ def test_bot_target_persistence(tmp_path, mock_config):
     # Second bot loading same file
     bot2 = InteractiveMonitoringBot(config=Config(target_urls=[]), targets_file=persisted_file)
     assert "https://persisted-site.com" in bot2.config.target_urls
+
+
+def test_bot_prefixes(mock_config):
+    bot = InteractiveMonitoringBot(config=mock_config)
+    bot._connection.user = MagicMock(id=999)
+    prefixes = bot.command_prefix(bot, MagicMock())
+    assert "?" in prefixes
+    assert "s!" in prefixes
+    assert "!" in prefixes
+
+
+def test_bot_sync_current_guild(mock_config):
+    async def _test():
+        bot = InteractiveMonitoringBot(config=mock_config)
+        cmd = bot.get_command("sync")
+        assert cmd is not None
+
+        ctx = MagicMock()
+        ctx.guild = MagicMock(id=101)
+        ctx.guild.name = "Production Server"
+        ctx.typing.return_value.__aenter__ = AsyncMock()
+        ctx.typing.return_value.__aexit__ = AsyncMock()
+        ctx.reply = AsyncMock()
+
+        bot.tree.copy_global_to = MagicMock()
+        mock_cmd1 = MagicMock()
+        mock_cmd1.name = "status"
+        mock_cmd2 = MagicMock()
+        mock_cmd2.name = "check"
+        bot.tree.sync = AsyncMock(return_value=[mock_cmd1, mock_cmd2])
+
+        await cmd.callback(ctx, None)
+
+        bot.tree.copy_global_to.assert_called_once_with(guild=ctx.guild)
+        bot.tree.sync.assert_called_once_with(guild=ctx.guild)
+        assert ctx.reply.called
+        embed = ctx.reply.call_args[1]["embed"]
+        assert "Sinkronisasi Command Berhasil" in embed.title
+        assert "Production Server" in embed.description
+        assert "/status" in embed.description
+        assert "/check" in embed.description
+
+    asyncio.run(_test())
+
+
+def test_bot_sync_all_guilds(mock_config):
+    async def _test():
+        bot = InteractiveMonitoringBot(config=mock_config)
+        cmd = bot.get_command("sync")
+
+        guild1 = MagicMock(id=101)
+        guild1.name = "Server A"
+        guild2 = MagicMock(id=102)
+        guild2.name = "Server B"
+        bot._connection._guilds = {101: guild1, 102: guild2}
+
+        ctx = MagicMock()
+        ctx.typing.return_value.__aenter__ = AsyncMock()
+        ctx.typing.return_value.__aexit__ = AsyncMock()
+        ctx.reply = AsyncMock()
+
+        bot.tree.copy_global_to = MagicMock()
+        bot.tree.sync = AsyncMock(return_value=[MagicMock(name="status")])
+
+        await cmd.callback(ctx, "all")
+
+        assert bot.tree.copy_global_to.call_count == 2
+        assert bot.tree.sync.call_count == 2
+        embed = ctx.reply.call_args[1]["embed"]
+        assert "Semua Server" in embed.title
+        assert "Server A" in embed.description
+        assert "Server B" in embed.description
+
+    asyncio.run(_test())
+
+
+def test_bot_sync_global(mock_config):
+    async def _test():
+        bot = InteractiveMonitoringBot(config=mock_config)
+        cmd = bot.get_command("sync")
+
+        ctx = MagicMock()
+        ctx.typing.return_value.__aenter__ = AsyncMock()
+        ctx.typing.return_value.__aexit__ = AsyncMock()
+        ctx.reply = AsyncMock()
+
+        bot.tree.sync = AsyncMock(return_value=[MagicMock(name="status")])
+
+        await cmd.callback(ctx, "global")
+
+        bot.tree.sync.assert_called_once_with()
+        embed = ctx.reply.call_args[1]["embed"]
+        assert "Global" in embed.title
+
+    asyncio.run(_test())
+
+
+def test_bot_sync_clear(mock_config):
+    async def _test():
+        bot = InteractiveMonitoringBot(config=mock_config)
+        cmd = bot.get_command("sync")
+
+        ctx = MagicMock()
+        ctx.guild = MagicMock(id=101)
+        ctx.guild.name = "Production Server"
+        ctx.typing.return_value.__aenter__ = AsyncMock()
+        ctx.typing.return_value.__aexit__ = AsyncMock()
+        ctx.reply = AsyncMock()
+
+        bot.tree.clear_commands = MagicMock()
+        bot.tree.sync = AsyncMock()
+
+        await cmd.callback(ctx, "clear")
+
+        bot.tree.clear_commands.assert_called_once_with(guild=ctx.guild)
+        bot.tree.sync.assert_called_once_with(guild=ctx.guild)
+        embed = ctx.reply.call_args[1]["embed"]
+        assert "Pembersihan Command Berhasil" in embed.title
+
+    asyncio.run(_test())
+
+
+def test_bot_sync_error_handling(mock_config):
+    async def _test():
+        bot = InteractiveMonitoringBot(config=mock_config)
+        cmd = bot.get_command("sync")
+
+        ctx = MagicMock()
+        ctx.guild = MagicMock(id=101)
+        ctx.guild.name = "Faulty Server"
+        ctx.typing.return_value.__aenter__ = AsyncMock()
+        ctx.typing.return_value.__aexit__ = AsyncMock()
+        ctx.reply = AsyncMock()
+
+        bot.tree.copy_global_to = MagicMock()
+        bot.tree.sync = AsyncMock(side_effect=Exception("Discord API error 500"))
+
+        await cmd.callback(ctx, None)
+
+        assert ctx.reply.called
+        embed = ctx.reply.call_args[1]["embed"]
+        assert "Gagal" in embed.title
+        assert "Discord API error 500" in embed.description
+
+    asyncio.run(_test())
 
